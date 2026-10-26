@@ -4,7 +4,7 @@ use std::{
     hash::Hash,
     ops::Deref,
     ptr,
-    sync::{LazyLock, Once},
+    sync::LazyLock,
 };
 
 use once_map::OnceMap;
@@ -20,9 +20,9 @@ type TypedAtomStore<T> = OnceMap<&'static T, Atom<T>>;
 #[derive(Copy)]
 pub struct Atom<T: 'static + ?Sized + Send + Sync>(&'static T);
 
-impl<T: 'static + Send + Sync + Debug> Debug for Atom<T> {
+impl<T: 'static + Send + Sync + Debug + ?Sized> Debug for Atom<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_tuple("Atom").field(self.0).finish()
+        f.debug_tuple("Atom").field(&self.0).finish()
     }
 }
 
@@ -67,7 +67,7 @@ impl<T: 'static + Send + Sync + Hash + Eq> Atom<T> {
 }
 
 impl<T: 'static + ?Sized + Send + Sync + Hash + Eq> Atom<T> {
-    pub fn new_static(item: &'static T) -> Self {
+    pub fn from_static(item: &'static T) -> Self {
         let typed_store =
             GLOBAL_ATOM_STORE.insert(item.type_id(), |_| Box::new(TypedAtomStore::<T>::new()));
 
@@ -77,5 +77,39 @@ impl<T: 'static + ?Sized + Send + Sync + Hash + Eq> Atom<T> {
             .unwrap();
 
         typed_store.insert_cloned(item, |_| Atom(item))
+    }
+
+    pub fn from_wrapper<W: Atomize<Out = T>>(wrapper: W) -> Self {
+        Self::from_static(wrapper.atomize())
+    }
+}
+
+pub trait Atomize {
+    type Out: ?Sized;
+
+    fn atomize(self) -> &'static Self::Out;
+}
+
+impl<T> Atomize for Box<T> {
+    type Out = T;
+
+    fn atomize(self) -> &'static Self::Out {
+        Box::leak(self)
+    }
+}
+
+impl Atomize for String {
+    type Out = str;
+
+    fn atomize(self) -> &'static Self::Out {
+        self.leak()
+    }
+}
+
+impl<T> Atomize for Vec<T> {
+    type Out = [T];
+
+    fn atomize(self) -> &'static Self::Out {
+        Vec::leak(self)
     }
 }
