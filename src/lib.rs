@@ -46,70 +46,87 @@ impl<T: 'static + ?Sized + Send + Sync> Deref for Atom<T> {
     }
 }
 
-impl<T: 'static + Send + Sync + Hash + Eq> Atom<T> {
-    pub fn new(item: T) -> Self {
+impl<T: 'static + Send + Sync + Hash + Eq + ?Sized> Atom<T> {
+    pub fn new<A: Atomize<T>>(item: A) -> Self {
         let typed_store =
-            GLOBAL_ATOM_STORE.insert(item.type_id(), |_| Box::new(TypedAtomStore::<T>::new()));
+            GLOBAL_ATOM_STORE.insert(TypeId::of::<T>(), |_| Box::new(TypedAtomStore::<T>::new()));
 
         let typed_store: &TypedAtomStore<T> = typed_store
             .downcast_ref()
             // it is always this store type for every atom type
             .unwrap();
 
-        match typed_store.get_cloned(&item) {
+        match typed_store.get_cloned(item.atom_ref()) {
             Some(v) => v,
             None => {
-                let v_ref: &'static T = Box::leak(Box::new(item));
+                let v_ref: &'static T = item.atomize();
                 typed_store.insert_cloned(v_ref, |_| Atom(v_ref))
             }
         }
     }
 }
 
-impl<T: 'static + ?Sized + Send + Sync + Hash + Eq> Atom<T> {
-    pub fn from_static(item: &'static T) -> Self {
-        let typed_store =
-            GLOBAL_ATOM_STORE.insert(item.type_id(), |_| Box::new(TypedAtomStore::<T>::new()));
-
-        let typed_store: &TypedAtomStore<T> = typed_store
-            .downcast_ref()
-            // it is always this store type for every atom type
-            .unwrap();
-
-        typed_store.insert_cloned(item, |_| Atom(item))
-    }
-
-    pub fn from_wrapper<W: Atomize<Out = T>>(wrapper: W) -> Self {
-        Self::from_static(wrapper.atomize())
-    }
+pub trait Atomize<T: ?Sized> {
+    fn atom_ref(&self) -> &T;
+    fn atomize(self) -> &'static T;
 }
 
-pub trait Atomize {
-    type Out: ?Sized;
-
-    fn atomize(self) -> &'static Self::Out;
-}
-
-impl<T> Atomize for Box<T> {
-    type Out = T;
-
-    fn atomize(self) -> &'static Self::Out {
+impl<T> Atomize<T> for Box<T> {
+    #[inline]
+    fn atomize(self) -> &'static T {
         Box::leak(self)
     }
-}
 
-impl Atomize for String {
-    type Out = str;
-
-    fn atomize(self) -> &'static Self::Out {
-        self.leak()
+    #[inline]
+    fn atom_ref(&self) -> &T {
+        self.as_ref()
     }
 }
 
-impl<T> Atomize for Vec<T> {
-    type Out = [T];
+impl Atomize<str> for String {
+    #[inline]
+    fn atomize(self) -> &'static str {
+        self.leak()
+    }
 
-    fn atomize(self) -> &'static Self::Out {
+    #[inline]
+    fn atom_ref(&self) -> &str {
+        self.as_ref()
+    }
+}
+
+impl<T> Atomize<[T]> for Vec<T> {
+    #[inline]
+    fn atomize(self) -> &'static [T] {
         Vec::leak(self)
+    }
+
+    #[inline]
+    fn atom_ref(&self) -> &[T] {
+        self.as_slice()
+    }
+}
+
+impl<T> Atomize<T> for T {
+    #[inline]
+    fn atomize(self) -> &'static T {
+        Box::leak(Box::new(self))
+    }
+
+    #[inline]
+    fn atom_ref(&self) -> &T {
+        self
+    }
+}
+
+impl<T: ?Sized> Atomize<T> for &'static T {
+    #[inline]
+    fn atomize(self) -> &'static T {
+        self
+    }
+
+    #[inline]
+    fn atom_ref(&self) -> &T {
+        *self
     }
 }
